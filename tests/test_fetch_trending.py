@@ -215,3 +215,39 @@ def test_fetch_gives_up_after_three_tries(monkeypatch):
         ft.fetch_html()
     assert len(calls) == 3
     assert sleeps == [5, 10]
+
+
+def test_main_saves_fixture(monkeypatch, tmp_path):
+    db = tmp_path / "t.db"
+    monkeypatch.setattr(ft, "DB_PATH", db)
+    monkeypatch.setattr(ft, "fetch_html", lambda: FIXTURE.read_text(encoding="utf-8"))
+
+    assert ft.main() == 0
+
+    con = sqlite3.connect(db)
+    try:
+        assert con.execute("SELECT COUNT(*) FROM weekly_trending").fetchone() == (18,)
+    finally:
+        con.close()
+
+
+def test_main_bad_page_fails_without_writing(monkeypatch, tmp_path):
+    db = tmp_path / "t.db"
+    monkeypatch.setattr(ft, "DB_PATH", db)
+    monkeypatch.setattr(ft, "fetch_html", lambda: "<html><body>redesigned</body></html>")
+
+    assert ft.main() == 1
+    assert not db.exists()
+
+
+def test_main_network_failure_fails_without_writing(monkeypatch, tmp_path):
+    db = tmp_path / "t.db"
+    monkeypatch.setattr(ft, "DB_PATH", db)
+
+    def down():
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(ft, "fetch_html", down)
+
+    assert ft.main() == 1
+    assert not db.exists()

@@ -132,3 +132,20 @@ def fetch_html(url=TRENDING_URL):
                 raise
             print(f"attempt {attempt} failed: {error}; retrying in {delay}s", file=sys.stderr)
             time.sleep(delay)
+
+
+def main():
+    """Fetch, parse and save today's (UTC) snapshot. Returns the exit code."""
+    snapshot_date = datetime.now(timezone.utc).date().isoformat()
+    try:
+        rows = parse_trending(fetch_html())
+    except (requests.RequestException, ParseError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    save_snapshot(DB_PATH, snapshot_date, rows)
+    print(f"{snapshot_date}: saved {len(rows)} repositories to {DB_PATH}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
