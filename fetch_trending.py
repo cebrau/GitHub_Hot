@@ -118,3 +118,17 @@ def save_snapshot(db_path, snapshot_date, rows):
             )
     finally:
         con.close()
+
+
+def fetch_html(url=TRENDING_URL):
+    """GET url and return the body; 3 tries in total, waiting RETRY_DELAYS between."""
+    for attempt, delay in enumerate((*RETRY_DELAYS, None), start=1):
+        try:
+            response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as error:
+            if delay is None:
+                raise
+            print(f"attempt {attempt} failed: {error}; retrying in {delay}s", file=sys.stderr)
+            time.sleep(delay)

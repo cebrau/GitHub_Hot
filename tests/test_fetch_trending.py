@@ -167,3 +167,51 @@ def test_different_days_are_both_kept(tmp_path):
     ft.save_snapshot(db, "2026-10-12", rows_for("b/two"))
     assert ranks_and_repos(db, "2026-10-05") == [(1, "a/one")]
     assert ranks_and_repos(db, "2026-10-12") == [(1, "b/two")]
+
+
+class FakeResponse:
+    def __init__(self, status_code, text=""):
+        self.status_code = status_code
+        self.text = text
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+def fake_get(outcomes, calls):
+    """requests.get stand-in: each call returns/raises the next outcome."""
+    def get(url, headers, timeout):
+        calls.append((url, headers, timeout))
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+    return get
+
+
+def test_fetch_retries_then_succeeds(monkeypatch):
+    calls, sleeps = [], []
+    outcomes = [FakeResponse(500), requests.ConnectionError("boom"), FakeResponse(200, "<html>ok</html>")]
+    monkeypatch.setattr(ft.requests, "get", fake_get(outcomes, calls))
+    monkeypatch.setattr(ft.time, "sleep", sleeps.append)
+
+    assert ft.fetch_html() == "<html>ok</html>"
+    assert len(calls) == 3
+    assert sleeps == [5, 10]
+    url, headers, timeout = calls[0]
+    assert url == "https://github.com/trending?since=weekly"
+    assert headers["User-Agent"].startswith("Mozilla/5.0")
+    assert timeout == 30
+
+
+def test_fetch_gives_up_after_three_tries(monkeypatch):
+    calls, sleeps = [], []
+    outcomes = [FakeResponse(503), FakeResponse(503), FakeResponse(503)]
+    monkeypatch.setattr(ft.requests, "get", fake_get(outcomes, calls))
+    monkeypatch.setattr(ft.time, "sleep", sleeps.append)
+
+    with pytest.raises(requests.HTTPError):
+        ft.fetch_html()
+    assert len(calls) == 3
+    assert sleeps == [5, 10]
