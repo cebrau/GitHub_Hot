@@ -112,3 +112,58 @@ def test_missing_required_field_raises(missing):
 def test_missing_repo_link_raises():
     with pytest.raises(ft.ParseError):
         ft.parse_trending(page('<article class="Box-row"><span>5 stars this week</span></article>'))
+
+
+def rows_for(*repos):
+    return [
+        {"rank": i, "repo": r, "description": None, "language": None,
+         "stars": 10, "forks": None, "stars_this_week": 5,
+         "url": f"https://github.com/{r}"}
+        for i, r in enumerate(repos, start=1)
+    ]
+
+
+def ranks_and_repos(db, snapshot_date):
+    con = sqlite3.connect(db)
+    try:
+        return con.execute(
+            "SELECT rank, repo FROM weekly_trending WHERE snapshot_date = ? ORDER BY rank",
+            (snapshot_date,),
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def test_save_creates_db_and_stores_all_columns(tmp_path):
+    db = tmp_path / "data" / "t.db"  # parent folder does not exist yet
+    row = {"rank": 1, "repo": "octo/demo", "description": "A demo", "language": "Python",
+           "stars": 1234, "forks": 56, "stars_this_week": 789,
+           "url": "https://github.com/octo/demo"}
+
+    ft.save_snapshot(db, "2026-10-05", [row])
+
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    try:
+        stored = dict(con.execute("SELECT * FROM weekly_trending").fetchone())
+    finally:
+        con.close()
+    fetched_at = stored.pop("fetched_at")
+    assert stored == {"snapshot_date": "2026-10-05", **row}
+    assert fetched_at.endswith("+00:00")
+
+
+def test_same_day_rerun_replaces_snapshot(tmp_path):
+    db = tmp_path / "t.db"
+    ft.save_snapshot(db, "2026-10-05", rows_for("a/one", "b/two"))
+    ft.save_snapshot(db, "2026-10-05", rows_for("b/two", "c/three"))
+    # a/one dropped off the list, so it must be gone.
+    assert ranks_and_repos(db, "2026-10-05") == [(1, "b/two"), (2, "c/three")]
+
+
+def test_different_days_are_both_kept(tmp_path):
+    db = tmp_path / "t.db"
+    ft.save_snapshot(db, "2026-10-05", rows_for("a/one"))
+    ft.save_snapshot(db, "2026-10-12", rows_for("b/two"))
+    assert ranks_and_repos(db, "2026-10-05") == [(1, "a/one")]
+    assert ranks_and_repos(db, "2026-10-12") == [(1, "b/two")]

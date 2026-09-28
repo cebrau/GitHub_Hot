@@ -21,6 +21,22 @@ USER_AGENT = (
 # Seconds to wait before the 2nd and 3rd attempt.
 RETRY_DELAYS = (5, 10)
 
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS weekly_trending (
+    snapshot_date   TEXT    NOT NULL,
+    rank            INTEGER NOT NULL,
+    repo            TEXT    NOT NULL,
+    description     TEXT,
+    language        TEXT,
+    stars           INTEGER NOT NULL,
+    forks           INTEGER,
+    stars_this_week INTEGER NOT NULL,
+    url             TEXT    NOT NULL,
+    fetched_at      TEXT    NOT NULL,
+    PRIMARY KEY (snapshot_date, repo)
+)
+"""
+
 
 class ParseError(Exception):
     """The trending page does not look the way we expect (probably redesigned)."""
@@ -73,3 +89,32 @@ def parse_trending(html):
             "url": f"https://github.com/{repo}",
         })
     return rows
+
+
+def save_snapshot(db_path, snapshot_date, rows):
+    """Store rows as the snapshot for snapshot_date, replacing any earlier one.
+
+    Delete + insert happen in one transaction, so repos that dropped off the
+    list since an earlier run the same day do not linger.
+    """
+    fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db_path)
+    try:
+        with con:
+            con.execute(SCHEMA)
+            con.execute("DELETE FROM weekly_trending WHERE snapshot_date = ?", (snapshot_date,))
+            con.executemany(
+                """
+                INSERT INTO weekly_trending (
+                    snapshot_date, rank, repo, description, language,
+                    stars, forks, stars_this_week, url, fetched_at
+                ) VALUES (
+                    :snapshot_date, :rank, :repo, :description, :language,
+                    :stars, :forks, :stars_this_week, :url, :fetched_at
+                )
+                """,
+                [{**row, "snapshot_date": snapshot_date, "fetched_at": fetched_at} for row in rows],
+            )
+    finally:
+        con.close()
