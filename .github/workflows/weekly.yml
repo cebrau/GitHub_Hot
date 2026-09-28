@@ -1,0 +1,37 @@
+name: Weekly GitHub trending
+
+on:
+  # Monday 00:17 UTC = 08:17 Taiwan. Off the hour: top-of-hour cron runs are often delayed.
+  schedule:
+    - cron: "17 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Fetch trending
+        run: python fetch_trending.py
+
+      - name: Commit database
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/github_trending.db
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "data: weekly trending snapshot ($(date -u +%F))"
+            git push
+          fi
