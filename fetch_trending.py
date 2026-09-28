@@ -32,3 +32,44 @@ def parse_count(text):
     if not match:
         raise ParseError(f"no number in {text!r}")
     return int(match.group(0).replace(",", ""))
+
+
+def _text(element):
+    """Whitespace-collapsed text of element, or None if missing or empty."""
+    if element is None:
+        return None
+    return " ".join(element.get_text().split()) or None
+
+
+def parse_trending(html):
+    """Parse the trending page into one dict per repo, in page order.
+
+    Raises ParseError if there are no repos, or a repo lacks its name,
+    total stars or stars this week. description, language and forks may be None.
+    """
+    articles = BeautifulSoup(html, "html.parser").select("article.Box-row")
+    if not articles:
+        raise ParseError("no repositories found on the trending page")
+
+    rows = []
+    for rank, article in enumerate(articles, start=1):
+        link = article.select_one("h2 a[href]")
+        stars = article.select_one('a[href$="/stargazers"]')
+        forks = article.select_one('a[href$="/forks"]')
+        # Separator " " keeps adjacent numbers (forks, stars this week) apart.
+        week = re.search(r"([\d,]+) stars? this week", article.get_text(" "))
+        if link is None or stars is None or week is None:
+            raise ParseError(f"row {rank} is missing repo, stars or stars this week")
+
+        repo = link["href"].strip("/")
+        rows.append({
+            "rank": rank,
+            "repo": repo,
+            "description": _text(article.select_one("p")),
+            "language": _text(article.select_one('[itemprop="programmingLanguage"]')),
+            "stars": parse_count(stars.get_text()),
+            "forks": parse_count(forks.get_text()) if forks is not None else None,
+            "stars_this_week": parse_count(week.group(1)),
+            "url": f"https://github.com/{repo}",
+        })
+    return rows
